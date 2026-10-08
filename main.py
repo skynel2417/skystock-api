@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from vnstock import Trading, Quote
+from vnstock import Trading, Quote, Company
 import pandas as pd
 from typing import List
 import time
@@ -137,5 +137,35 @@ def get_history(symbol: str, days: int = 60):
             return data
     except Exception as e:
         print("History error:", e)
+@app.get("/api/company/{symbol}")
+def get_company(symbol: str):
+    symbol = symbol.upper()
+    cache_key = f"company_{symbol}"
+    cached = get_cached(cache_key)
+    if cached:
+        return cached
 
+    try:
+        company = Company(symbol=symbol, source="VCI")
+        overview = company.overview()
+
+        # overview thường là DataFrame 1 dòng
+        if overview is not None and not overview.empty:
+            row = overview.iloc[0]
+            data = {
+                "symbol": symbol,
+                "name": str(row.get("short_name") or row.get("company_name") or row.get("organ_name") or symbol),
+                "full_name": str(row.get("company_name") or row.get("organ_name") or ""),
+                "exchange": str(row.get("exchange") or row.get("com_group_code") or ""),
+                "industry": str(row.get("industry") or row.get("icb_name3") or row.get("sector") or ""),
+                "website": str(row.get("website") or ""),
+                "employees": str(row.get("no_employees") or row.get("employees") or ""),
+                "founded": str(row.get("issue_date") or row.get("founded_year") or ""),
+            }
+            set_cached(cache_key, data)
+            return data
+    except Exception as e:
+        print("Company error:", e)
+
+    return {"symbol": symbol, "name": symbol, "full_name": "", "exchange": "", "industry": ""}
     return []
