@@ -57,15 +57,35 @@ def get_board(symbols: str = Query(...)):
 
             for _, row in df.iterrows():
                 try:
-                    # Thử nhiều tên cột khác nhau tùy version vnstock
+                    
                     symbol = str(row.get("listing_symbol") or row.get("symbol") or row.get("Mã CP") or "")
                     price = float(row.get("match_match_price") or row.get("match_price") or row.get("Giá") or row.get("close_price") or 0)
-                    change = float(row.get("match_price_change") or row.get("price_change") or row.get("+/-") or 0)
-                    percent = float(row.get("match_percent_price_change") or row.get("percent_change") or row.get("%") or 0)
+                    
+                    # Thử nhiều tên cột khác nhau cho phần thay đổi giá
+                    change = float(
+                        row.get("match_price_change") or 
+                        row.get("price_change") or 
+                        row.get("match_change") or
+                        row.get("change") or
+                        row.get("+/-") or 0
+                    )
+                    percent = float(
+                        row.get("match_percent_price_change") or 
+                        row.get("percent_change") or 
+                        row.get("match_percent_change") or
+                        row.get("percent") or
+                        row.get("%") or 0
+                    )
+                    
                     volume = int(float(row.get("match_accumulated_volume") or row.get("total_volume") or row.get("Tổng KL") or 0))
                     ceiling = float(row.get("listing_ceiling") or row.get("ceiling") or row.get("Trần") or 0)
                     floor = float(row.get("listing_floor") or row.get("floor") or row.get("Sàn") or 0)
-
+                    
+                    # Nếu vẫn bằng 0 thì tính tạm từ giá và giá tham chiếu
+                    ref_price = float(row.get("listing_ref_price") or row.get("ref_price") or row.get("Giá TC") or 0)
+                    if change == 0 and ref_price > 0 and price > 0:
+                        change = price - ref_price
+                        percent = (change / ref_price) * 100
                     if symbol:
                         result.append({
                             "symbol": symbol,
