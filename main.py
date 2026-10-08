@@ -106,7 +106,7 @@ def get_board(symbols: str = Query(...)):
     return result
 
 @app.get("/api/history/{symbol}")
-def get_history(symbol: str, days: int = 60):
+def get_history(symbol: str, days: int = 800):
     symbol = symbol.upper()
     cache_key = f"history_{symbol}_{days}"
     cached = get_cached(cache_key)
@@ -115,10 +115,10 @@ def get_history(symbol: str, days: int = 60):
 
     try:
         quote = Quote(symbol=symbol, source="VCI")
-        df = quote.history(start="2024-01-01", interval="1D")
+        df = quote.history(start="2022-01-01", interval="1D")
 
         if df is not None and not df.empty:
-            df = df.tail(days)
+            df = df.tail(min(days, len(df)))
             data = []
             for _, row in df.iterrows():
                 t = row.get("time") or row.get("date")
@@ -132,11 +132,14 @@ def get_history(symbol: str, days: int = 60):
                     "high": float(row["high"]),
                     "low": float(row["low"]),
                     "close": float(row["close"]),
+                    "volume": float(row.get("volume", 0) or 0),
                 })
             set_cached(cache_key, data)
             return data
     except Exception as e:
         print("History error:", e)
+
+    return []
 @app.get("/api/company/{symbol}")
 def get_company(symbol: str):
     symbol = symbol.upper()
