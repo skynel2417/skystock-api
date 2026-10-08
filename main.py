@@ -1,13 +1,12 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from vnstock import Vnstock
+from vnstock import Trading, Quote
 import pandas as pd
 from typing import List
 import time
 
 app = FastAPI(title="SkyStock API")
 
-# Cho phép website của bạn gọi API này
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,9 +15,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Cache đơn giản để tránh gọi quá nhiều
 cache = {}
-CACHE_TIME = 20  # giây
+CACHE_TIME = 25
 
 def get_cached(key):
     if key in cache:
@@ -34,12 +32,12 @@ def set_cached(key, data):
 def home():
     return {"message": "SkyStock API đang chạy", "status": "ok"}
 
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
 @app.get("/api/board")
-def get_board(symbols: str = Query(..., description="Danh sách mã, cách nhau bởi dấu phẩy")):
-    """
-    Lấy bảng giá theo danh sách mã
-    Ví dụ: /api/board?symbols=VCB,FPT,HPG
-    """
+def get_board(symbols: str = Query(...)):
     cache_key = f"board_{symbols}"
     cached = get_cached(cache_key)
     if cached:
@@ -49,37 +47,46 @@ def get_board(symbols: str = Query(..., description="Danh sách mã, cách nhau 
     result = []
 
     try:
-        stock = Vnstock().stock(symbol=symbol_list[0], source="VCI")
-        # Lấy bảng giá
-        df = stock.trading.price_board(symbol_list)
+        trading = Trading(source="VCI")
+        df = trading.price_board(symbols_list=symbol_list)
 
         if df is not None and not df.empty:
+            # Làm phẳng cột nếu là MultiIndex
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = ['_'.join(col).strip() for col in df.columns.values]
+
             for _, row in df.iterrows():
                 try:
-                    item = {
-                        "symbol": str(row.get("Mã CP", row.get("symbol", ""))),
-                        "price": float(row.get("Giá", row.get("match_price", 0)) or 0),
-                        "change": float(row.get("+/-", row.get("price_change", 0)) or 0),
-                        "percent": float(row.get("%", row.get("percent_change", 0)) or 0),
-                        "volume": int(row.get("Tổng KL", row.get("total_volume", 0)) or 0),
-                        "ceiling": float(row.get("Trần", row.get("ceiling", 0)) or 0),
-                        "floor": float(row.get("Sàn", row.get("floor", 0)) or 0),
-                    }
-                    result.append(item)
-                except Exception:
+                    # Thử nhiều tên cột khác nhau tùy version vnstock
+                    symbol = str(row.get("listing_symbol") or row.get("symbol") or row.get("Mã CP") or "")
+                    price = float(row.get("match_match_price") or row.get("match_price") or row.get("Giá") or row.get("close_price") or 0)
+                    change = float(row.get("match_price_change") or row.get("price_change") or row.get("+/-") or 0)
+                    percent = float(row.get("match_percent_price_change") or row.get("percent_change") or row.get("%") or 0)
+                    volume = int(float(row.get("match_accumulated_volume") or row.get("total_volume") or row.get("Tổng KL") or 0))
+                    ceiling = float(row.get("listing_ceiling") or row.get("ceiling") or row.get("Trần") or 0)
+                    floor = float(row.get("listing_floor") or row.get("floor") or row.get("Sàn") or 0)
+
+                    if symbol:
+                        result.append({
+                            "symbol": symbol,
+                            "price": price,
+                            "change": change,
+                            "percent": percent,
+                            "volume": volume,
+                            "ceiling": ceiling,
+                            "floor": floor
+                        })
+                except Exception as e:
+                    print("Row error:", e)
                     continue
     except Exception as e:
-        # Nếu lỗi, trả về rỗng
-        print("Error:", e)
+        print("Board error:", e)
 
     set_cached(cache_key, result)
     return result
 
 @app.get("/api/history/{symbol}")
-def get_history(symbol: str, days: int = 30):
-    """
-    Lấy dữ liệu nến lịch sử
-    """
+def get_history(symbol: str, days: int = 60):
     symbol = symbol.upper()
     cache_key = f"history_{symbol}_{days}"
     cached = get_cached(cache_key)
@@ -87,15 +94,20 @@ def get_history(symbol: str, days: int = 30):
         return cached
 
     try:
-        stock = Vnstock().stock(symbol=symbol, source="VCI")
-        df = stock.quote.history(start="2024-01-01", end=None, interval="1D")
+        quote = Quote(symbol=symbol, source="VCI")
+        df = quote.history(start="2024-01-01", interval="1D")
 
         if df is not None and not df.empty:
             df = df.tail(days)
             data = []
             for _, row in df.iterrows():
+                t = row.get("time") or row.get("date")
+                if hasattr(t, "timestamp"):
+                    ts = int(t.timestamp())
+                else:
+                    ts = int(pd.Timestamp(t).timestamp())
                 data.append({
-                    "time": int(pd.Timestamp(row["time"]).timestamp()),
+                    "time": ts,
                     "open": float(row["open"]),
                     "high": float(row["high"]),
                     "low": float(row["low"]),
@@ -107,7 +119,3 @@ def get_history(symbol: str, days: int = 30):
         print("History error:", e)
 
     return []
-
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
